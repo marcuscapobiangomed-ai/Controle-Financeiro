@@ -69,6 +69,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     selectedMonth,
     isDemoData,
     clearMockData,
+    cdiScheduleInfo,
   } = useFinance();
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -176,7 +177,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="p-5 rounded-xl bg-slate-900/90 border border-slate-800 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs text-slate-400">
             <span className="font-medium">Investimentos Totais</span>
-            <TrendingUp className="w-4 h-4 text-sky-400" />
+            <div
+              className="flex items-center gap-1 text-[10px] font-mono font-medium text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20"
+              title={`Apuração automática diária às 11:00 (B3/CETIP). ${cdiScheduleInfo.lastAccrualText}`}
+            >
+              <Clock className="w-3 h-3 text-emerald-400" />
+              <span>11h Auto</span>
+            </div>
           </div>
           <div className="mt-2">
             <div className="text-2xl font-bold tracking-tight text-white font-mono tabular-nums">

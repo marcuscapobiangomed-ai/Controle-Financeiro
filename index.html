@@ -22,6 +22,63 @@
           console.warn('[CapitalControl Confirm]:', msg);
           return true;
         };
+
+        // Stub/mock Vite HMR WebSocket connection per AI Studio guidelines (HMR is disabled in iframe)
+        // Prevents @vite/client from throwing unhandled WebSocket closed errors
+        if (typeof window.WebSocket !== 'undefined') {
+          var NativeWebSocket = window.WebSocket;
+          window.WebSocket = function (url, protocols) {
+            var urlStr = String(url || '');
+            var isViteHmr =
+              protocols === 'vite-hmr' ||
+              (Array.isArray(protocols) && protocols.indexOf('vite-hmr') !== -1) ||
+              urlStr.indexOf('vite-hmr') !== -1 ||
+              urlStr.indexOf('token=') !== -1;
+
+            if (isViteHmr) {
+              var listeners = {};
+              var dummy = {
+                readyState: 1, // OPEN
+                OPEN: 1,
+                CLOSED: 3,
+                CLOSING: 2,
+                CONNECTING: 0,
+                url: urlStr,
+                protocol: 'vite-hmr',
+                send: function () {},
+                close: function () {},
+                addEventListener: function (type, listener) {
+                  listeners[type] = listeners[type] || [];
+                  listeners[type].push(listener);
+                  if (type === 'open') {
+                    setTimeout(function () {
+                      try { listener({ type: 'open' }); } catch (e) {}
+                    }, 0);
+                  }
+                },
+                removeEventListener: function (type, listener) {
+                  if (listeners[type]) {
+                    listeners[type] = listeners[type].filter(function (l) { return l !== listener; });
+                  }
+                },
+                dispatchEvent: function (evt) {
+                  var list = listeners[evt && evt.type] || [];
+                  for (var i = 0; i < list.length; i++) {
+                    try { list[i](evt); } catch (e) {}
+                  }
+                  return true;
+                }
+              };
+              return dummy;
+            }
+            return new NativeWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = NativeWebSocket.prototype;
+          window.WebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+          window.WebSocket.OPEN = NativeWebSocket.OPEN;
+          window.WebSocket.CLOSING = NativeWebSocket.CLOSING;
+          window.WebSocket.CLOSED = NativeWebSocket.CLOSED;
+        }
       }
 
       // Ignore WebSocket and Vite HMR errors in iframe environment per platform guidelines
@@ -32,22 +89,29 @@
           msg.indexOf('WebSocket') !== -1 ||
           stack.indexOf('WebSocket') !== -1 ||
           stack.indexOf('@vite/client') !== -1 ||
-          msg.indexOf('@vite/client') !== -1
+          msg.indexOf('@vite/client') !== -1 ||
+          msg.indexOf('vite-hmr') !== -1
         ) {
           e.preventDefault();
+          if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         }
-      });
+      }, true);
+
       window.addEventListener('error', function (e) {
         var msg = e ? (e.message || '') : '';
         var filename = e ? (e.filename || '') : '';
+        var stack = e && e.error && e.error.stack ? String(e.error.stack) : '';
         if (
           msg.indexOf('WebSocket') !== -1 ||
           filename.indexOf('@vite/client') !== -1 ||
-          msg.indexOf('@vite/client') !== -1
+          msg.indexOf('@vite/client') !== -1 ||
+          stack.indexOf('@vite/client') !== -1 ||
+          msg.indexOf('vite-hmr') !== -1
         ) {
           e.preventDefault();
+          if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         }
-      });
+      }, true);
     </script>
   </head>
   <body class="bg-slate-950 text-slate-100 antialiased font-sans min-h-screen selection:bg-emerald-500/30 selection:text-emerald-200">

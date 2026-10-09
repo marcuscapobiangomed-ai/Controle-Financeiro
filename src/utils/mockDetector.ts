@@ -55,6 +55,15 @@ export function isMockAccount(acc: { id: string }): boolean {
  */
 export function isMockTransaction(tx: { id: string }): boolean {
   if (MOCK_TRANSACTION_PREFIXES.includes(tx.id)) return true;
+  if (
+    tx.id.startsWith('tx_oct_') ||
+    tx.id.startsWith('tx_prev_') ||
+    tx.id.startsWith('tx_jul_') ||
+    tx.id.startsWith('tx_jun_') ||
+    tx.id.startsWith('tx_may_')
+  ) {
+    return true;
+  }
   // Se for ID simples tx_1 até tx_35
   const match = tx.id.match(/^tx_(\d+)$/);
   if (match) {

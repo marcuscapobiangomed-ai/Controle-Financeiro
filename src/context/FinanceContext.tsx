@@ -40,6 +40,8 @@ import {
 import {
   calculateCdiAccruedValue,
   CURRENT_CDI_ANNUAL_DEFAULT,
+  getCdiAccrualScheduleInfo,
+  getEffectiveCdiAccrualDate,
 } from '../utils/cdiCalculations';
 
 interface FinanceContextType {
@@ -51,6 +53,15 @@ interface FinanceContextType {
   goals: FinancialGoal[];
   selectedMonth: string; // YYYY-MM
   setSelectedMonth: (month: string) => void;
+
+  // CDI 11h Auto-Accrual Schedule Info
+  cdiScheduleInfo: {
+    lastAccrualText: string;
+    nextAccrualText: string;
+    isUpdatedToday: boolean;
+    effectiveDate: string;
+    dailyRatePercent: number;
+  };
 
   // Cloud & Offline status
   isCloudSyncing: boolean;
@@ -184,7 +195,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, []);
 
-  const hasClearedMocksRef = useRef<boolean>(true);
+  // Active CDI 11h accrual timer: triggers automatic recomputation at 11:00 AM every business day
+  const [accrualTimestamp, setAccrualTimestamp] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    // Check every 30 seconds to catch the 11:00 AM threshold in real-time
+    const timer = setInterval(() => {
+      setAccrualTimestamp(Date.now());
+    }, 30000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        setAccrualTimestamp(Date.now());
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
+  const cdiScheduleInfo = useMemo(() => {
+    return getCdiAccrualScheduleInfo(new Date(accrualTimestamp));
+  }, [accrualTimestamp]);
+
+  const hasClearedMocksRef = useRef<boolean>(
+    localStorage.getItem('capital_control_cleared_mock_v1') === 'true'
+  );
 
   const [isOnboardingDone, setIsOnboardingDoneState] = useState<boolean>(() => {
     return localStorage.getItem('capital_control_onboarding_done_v1') === 'true';
@@ -193,7 +232,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setIsOnboardingDone = (done: boolean) => {
     setIsOnboardingDoneState(done);
     if (done) {
-      hasClearedMocksRef.current = true;
       localStorage.setItem('capital_control_onboarding_done_v1', 'true');
     } else {
       localStorage.removeItem('capital_control_onboarding_done_v1');
@@ -201,78 +239,95 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const [accounts, setAccounts] = useState<Account[]>(() => {
+    const hasCleared = localStorage.getItem('capital_control_cleared_mock_v1') === 'true';
     const saved = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
     if (saved) {
       try {
         const parsed: Account[] = JSON.parse(saved);
-        const nonMock = parsed.filter(a => !isMockAccount(a));
-        if (nonMock.length > 0) return nonMock;
+        if (hasCleared) {
+          const nonMock = parsed.filter(a => !isMockAccount(a));
+          if (nonMock.length > 0) return nonMock;
+        } else if (parsed.length > 0) {
+          return parsed;
+        }
       } catch {}
     }
-    return [
-      {
-        id: 'acc_principal',
-        name: 'Conta Principal',
-        institution: 'Meu Banco',
-        type: 'checking',
-        initialBalance: 0,
-        color: '#10b981',
-      },
-    ];
+    return hasCleared ? [defaultCleanAccount] : INITIAL_ACCOUNTS;
   });
 
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    const hasCleared = localStorage.getItem('capital_control_cleared_mock_v1') === 'true';
     const saved = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
     if (saved) {
       try {
         const parsed: Transaction[] = JSON.parse(saved);
-        return parsed.filter(t => !isMockTransaction(t));
+        if (hasCleared) {
+          return parsed.filter(t => !isMockTransaction(t));
+        } else if (parsed.length > 0) {
+          return parsed;
+        }
       } catch {}
     }
-    return [];
+    return hasCleared ? [] : INITIAL_TRANSACTIONS;
   });
 
   const [investments, setInvestments] = useState<InvestmentAsset[]>(() => {
+    const hasCleared = localStorage.getItem('capital_control_cleared_mock_v1') === 'true';
     const saved = localStorage.getItem(STORAGE_KEYS.INVESTMENTS);
     if (saved) {
       try {
         const parsed: InvestmentAsset[] = JSON.parse(saved);
-        return parsed.filter(i => !isMockInvestment(i));
+        if (hasCleared) {
+          return parsed.filter(i => !isMockInvestment(i));
+        } else if (parsed.length > 0) {
+          return parsed;
+        }
       } catch {}
     }
-    return [];
+    return hasCleared ? [] : INITIAL_INVESTMENTS;
   });
 
   const [dividends, setDividends] = useState<DividendRecord[]>(() => {
+    const hasCleared = localStorage.getItem('capital_control_cleared_mock_v1') === 'true';
     const saved = localStorage.getItem(STORAGE_KEYS.DIVIDENDS);
     if (saved) {
       try {
         const parsed: DividendRecord[] = JSON.parse(saved);
-        return parsed.filter(d => !isMockDividend(d));
+        if (hasCleared) {
+          return parsed.filter(d => !isMockDividend(d));
+        } else if (parsed.length > 0) {
+          return parsed;
+        }
       } catch {}
     }
-    return [];
+    return hasCleared ? [] : INITIAL_DIVIDENDS;
   });
 
   const [budgets, setBudgets] = useState<BudgetLimit[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.BUDGETS);
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed: BudgetLimit[] = JSON.parse(saved);
+        if (parsed.length > 0) return parsed;
       } catch {}
     }
-    return [];
+    return INITIAL_BUDGETS;
   });
 
   const [goals, setGoals] = useState<FinancialGoal[]>(() => {
+    const hasCleared = localStorage.getItem('capital_control_cleared_mock_v1') === 'true';
     const saved = localStorage.getItem(STORAGE_KEYS.GOALS);
     if (saved) {
       try {
         const parsed: FinancialGoal[] = JSON.parse(saved);
-        return parsed.filter(g => !isMockGoal(g));
+        if (hasCleared) {
+          return parsed.filter(g => !isMockGoal(g));
+        } else if (parsed.length > 0) {
+          return parsed;
+        }
       } catch {}
     }
-    return [];
+    return hasCleared ? [] : INITIAL_GOALS;
   });
 
   const isDemoData = useMemo(() => {
@@ -358,7 +413,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           localStorage.setItem('capital_control_cleared_mock_v1', 'true');
         }
         if (data.onboardingDone === true) {
-          hasClearedMocksRef.current = true;
           setIsOnboardingDoneState(true);
           localStorage.setItem('capital_control_onboarding_done_v1', 'true');
         }
@@ -370,32 +424,43 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, 'users', userId, 'accounts'),
       async snapshot => {
         if (snapshot.empty) {
-          await setDoc(doc(db, 'users', userId, 'accounts', defaultCleanAccount.id), defaultCleanAccount);
-          setAccounts([defaultCleanAccount]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify([defaultCleanAccount]));
-            recordSyncSuccess();
-          } catch {}
+          if (!hasClearedMocksRef.current) {
+            const batch = writeBatch(db);
+            INITIAL_ACCOUNTS.forEach(a => batch.set(doc(db, 'users', userId, 'accounts', a.id), a));
+            batch.commit().catch(() => {});
+            setAccounts(INITIAL_ACCOUNTS);
+            try {
+              localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(INITIAL_ACCOUNTS));
+              recordSyncSuccess();
+            } catch {}
+          } else {
+            await setDoc(doc(db, 'users', userId, 'accounts', defaultCleanAccount.id), defaultCleanAccount);
+            setAccounts([defaultCleanAccount]);
+            try {
+              localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify([defaultCleanAccount]));
+              recordSyncSuccess();
+            } catch {}
+          }
         } else {
           const list: Account[] = [];
           const mockDocsToDelete: any[] = [];
           snapshot.forEach(d => {
             const acc = d.data() as Account;
-            if (isMockAccount(acc)) {
+            if (hasClearedMocksRef.current && isMockAccount(acc)) {
               mockDocsToDelete.push(d.ref);
             } else {
               list.push(acc);
             }
           });
 
-          // Background purge of mock accounts from user's Firestore
-          if (mockDocsToDelete.length > 0) {
+          // Background purge of mock accounts ONLY when user has chosen to clear mocks
+          if (hasClearedMocksRef.current && mockDocsToDelete.length > 0) {
             const b = writeBatch(db);
             mockDocsToDelete.forEach(ref => b.delete(ref));
             b.commit().catch(e => console.warn('Erro ao expurgar mock accounts do Firestore:', e));
           }
 
-          const finalAccounts = list.length > 0 ? list : [defaultCleanAccount];
+          const finalAccounts = list.length > 0 ? list : (hasClearedMocksRef.current ? [defaultCleanAccount] : INITIAL_ACCOUNTS);
           setAccounts(finalAccounts);
           try {
             localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(finalAccounts));
@@ -414,24 +479,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, 'users', userId, 'transactions'),
       async snapshot => {
         if (snapshot.empty) {
-          setTransactions([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify([]));
-            recordSyncSuccess();
-          } catch {}
+          if (!hasClearedMocksRef.current) {
+            const batch = writeBatch(db);
+            INITIAL_TRANSACTIONS.forEach(t => batch.set(doc(db, 'users', userId, 'transactions', t.id), t));
+            batch.commit().catch(() => {});
+            setTransactions(INITIAL_TRANSACTIONS);
+            try {
+              localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(INITIAL_TRANSACTIONS));
+              recordSyncSuccess();
+            } catch {}
+          } else {
+            setTransactions([]);
+            try {
+              localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify([]));
+              recordSyncSuccess();
+            } catch {}
+          }
         } else {
           const list: Transaction[] = [];
           const mockDocsToDelete: any[] = [];
           snapshot.forEach(d => {
             const tx = d.data() as Transaction;
-            if (isMockTransaction(tx)) {
+            if (hasClearedMocksRef.current && isMockTransaction(tx)) {
               mockDocsToDelete.push(d.ref);
             } else {
               list.push(tx);
             }
           });
 
-          if (mockDocsToDelete.length > 0) {
+          if (hasClearedMocksRef.current && mockDocsToDelete.length > 0) {
             const b = writeBatch(db);
             mockDocsToDelete.forEach(ref => b.delete(ref));
             b.commit().catch(e => console.warn('Erro ao expurgar mock transactions do Firestore:', e));
@@ -453,24 +529,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, 'users', userId, 'investments'),
       async snapshot => {
         if (snapshot.empty) {
-          setInvestments([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify([]));
-            recordSyncSuccess();
-          } catch {}
+          if (!hasClearedMocksRef.current) {
+            const batch = writeBatch(db);
+            INITIAL_INVESTMENTS.forEach(i => batch.set(doc(db, 'users', userId, 'investments', i.id), i));
+            batch.commit().catch(() => {});
+            setInvestments(INITIAL_INVESTMENTS);
+            try {
+              localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify(INITIAL_INVESTMENTS));
+              recordSyncSuccess();
+            } catch {}
+          } else {
+            setInvestments([]);
+            try {
+              localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify([]));
+              recordSyncSuccess();
+            } catch {}
+          }
         } else {
           const list: InvestmentAsset[] = [];
           const mockDocsToDelete: any[] = [];
           snapshot.forEach(d => {
             const inv = d.data() as InvestmentAsset;
-            if (isMockInvestment(inv)) {
+            if (hasClearedMocksRef.current && isMockInvestment(inv)) {
               mockDocsToDelete.push(d.ref);
             } else {
               list.push(inv);
             }
           });
 
-          if (mockDocsToDelete.length > 0) {
+          if (hasClearedMocksRef.current && mockDocsToDelete.length > 0) {
             const b = writeBatch(db);
             mockDocsToDelete.forEach(ref => b.delete(ref));
             b.commit().catch(e => console.warn('Erro ao expurgar mock investments do Firestore:', e));
@@ -490,24 +577,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, 'users', userId, 'dividends'),
       async snapshot => {
         if (snapshot.empty) {
-          setDividends([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.DIVIDENDS, JSON.stringify([]));
-            recordSyncSuccess();
-          } catch {}
+          if (!hasClearedMocksRef.current) {
+            const batch = writeBatch(db);
+            INITIAL_DIVIDENDS.forEach(d => batch.set(doc(db, 'users', userId, 'dividends', d.id), d));
+            batch.commit().catch(() => {});
+            setDividends(INITIAL_DIVIDENDS);
+            try {
+              localStorage.setItem(STORAGE_KEYS.DIVIDENDS, JSON.stringify(INITIAL_DIVIDENDS));
+              recordSyncSuccess();
+            } catch {}
+          } else {
+            setDividends([]);
+            try {
+              localStorage.setItem(STORAGE_KEYS.DIVIDENDS, JSON.stringify([]));
+              recordSyncSuccess();
+            } catch {}
+          }
         } else {
           const list: DividendRecord[] = [];
           const mockDocsToDelete: any[] = [];
           snapshot.forEach(d => {
             const div = d.data() as DividendRecord;
-            if (isMockDividend(div)) {
+            if (hasClearedMocksRef.current && isMockDividend(div)) {
               mockDocsToDelete.push(d.ref);
             } else {
               list.push(div);
             }
           });
 
-          if (mockDocsToDelete.length > 0) {
+          if (hasClearedMocksRef.current && mockDocsToDelete.length > 0) {
             const b = writeBatch(db);
             mockDocsToDelete.forEach(ref => b.delete(ref));
             b.commit().catch(e => console.warn('Erro ao expurgar mock dividends do Firestore:', e));
@@ -528,11 +626,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, 'users', userId, 'budgets'),
       async snapshot => {
         if (snapshot.empty) {
-          setBudgets([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify([]));
-            recordSyncSuccess();
-          } catch {}
+          if (!hasClearedMocksRef.current) {
+            const batch = writeBatch(db);
+            INITIAL_BUDGETS.forEach((b, idx) => batch.set(doc(db, 'users', userId, 'budgets', `b_${idx}`), b));
+            batch.commit().catch(() => {});
+            setBudgets(INITIAL_BUDGETS);
+            try {
+              localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(INITIAL_BUDGETS));
+              recordSyncSuccess();
+            } catch {}
+          } else {
+            setBudgets([]);
+            try {
+              localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify([]));
+              recordSyncSuccess();
+            } catch {}
+          }
         } else {
           const list: BudgetLimit[] = [];
           snapshot.forEach(d => list.push(d.data() as BudgetLimit));
@@ -550,24 +659,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, 'users', userId, 'goals'),
       async snapshot => {
         if (snapshot.empty) {
-          setGoals([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify([]));
-            recordSyncSuccess();
-          } catch {}
+          if (!hasClearedMocksRef.current) {
+            const batch = writeBatch(db);
+            INITIAL_GOALS.forEach(g => batch.set(doc(db, 'users', userId, 'goals', g.id), g));
+            batch.commit().catch(() => {});
+            setGoals(INITIAL_GOALS);
+            try {
+              localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(INITIAL_GOALS));
+              recordSyncSuccess();
+            } catch {}
+          } else {
+            setGoals([]);
+            try {
+              localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify([]));
+              recordSyncSuccess();
+            } catch {}
+          }
         } else {
           const list: FinancialGoal[] = [];
           const mockDocsToDelete: any[] = [];
           snapshot.forEach(d => {
             const g = d.data() as FinancialGoal;
-            if (isMockGoal(g)) {
+            if (hasClearedMocksRef.current && isMockGoal(g)) {
               mockDocsToDelete.push(d.ref);
             } else {
               list.push(g);
             }
           });
 
-          if (mockDocsToDelete.length > 0) {
+          if (hasClearedMocksRef.current && mockDocsToDelete.length > 0) {
             const b = writeBatch(db);
             mockDocsToDelete.forEach(ref => b.delete(ref));
             b.commit().catch(e => console.warn('Erro ao expurgar mock goals do Firestore:', e));
@@ -1113,33 +1233,48 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const resetToInitialData = async () => {
+    hasClearedMocksRef.current = false;
     localStorage.removeItem('capital_control_cleared_mock_v1');
+    localStorage.removeItem('capital_control_onboarding_done_v1');
     localStorage.setItem('capital_control_demo_mode_active', 'true');
+    setIsOnboardingDoneState(false);
+
+    setAccounts(INITIAL_ACCOUNTS);
+    setTransactions(INITIAL_TRANSACTIONS);
+    setInvestments(INITIAL_INVESTMENTS);
+    setDividends(INITIAL_DIVIDENDS);
+    setBudgets(INITIAL_BUDGETS);
+    setGoals(INITIAL_GOALS);
+    const now = new Date();
+    setSelectedMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+
+    localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(INITIAL_ACCOUNTS));
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(INITIAL_TRANSACTIONS));
+    localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify(INITIAL_INVESTMENTS));
+    localStorage.setItem(STORAGE_KEYS.DIVIDENDS, JSON.stringify(INITIAL_DIVIDENDS));
+    localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(INITIAL_BUDGETS));
+    localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(INITIAL_GOALS));
 
     if (user) {
-      const batch = writeBatch(db);
-      // Mark profile as demo
-      batch.set(
-        doc(db, 'users', user.uid),
-        { clearedMockData: false, isDemoData: true, updatedAt: new Date().toISOString() },
-        { merge: true }
-      );
-      // Seed fresh default data into Firestore
-      INITIAL_ACCOUNTS.forEach(a => batch.set(doc(db, 'users', user.uid, 'accounts', a.id), a));
-      INITIAL_TRANSACTIONS.forEach(t => batch.set(doc(db, 'users', user.uid, 'transactions', t.id), t));
-      INITIAL_INVESTMENTS.forEach(i => batch.set(doc(db, 'users', user.uid, 'investments', i.id), i));
-      INITIAL_DIVIDENDS.forEach(d => batch.set(doc(db, 'users', user.uid, 'dividends', d.id), d));
-      INITIAL_BUDGETS.forEach((b, idx) => batch.set(doc(db, 'users', user.uid, 'budgets', `b_${idx}`), b));
-      INITIAL_GOALS.forEach(g => batch.set(doc(db, 'users', user.uid, 'goals', g.id), g));
-      await batch.commit();
-    } else {
-      setAccounts(INITIAL_ACCOUNTS);
-      setTransactions(INITIAL_TRANSACTIONS);
-      setInvestments(INITIAL_INVESTMENTS);
-      setDividends(INITIAL_DIVIDENDS);
-      setBudgets(INITIAL_BUDGETS);
-      setGoals(INITIAL_GOALS);
-      setSelectedMonth('2026-09');
+      try {
+        const batch = writeBatch(db);
+        // Mark profile as demo
+        batch.set(
+          doc(db, 'users', user.uid),
+          { clearedMockData: false, isDemoData: true, onboardingDone: false, updatedAt: new Date().toISOString() },
+          { merge: true }
+        );
+        // Seed fresh default data into Firestore
+        INITIAL_ACCOUNTS.forEach(a => batch.set(doc(db, 'users', user.uid, 'accounts', a.id), a));
+        INITIAL_TRANSACTIONS.forEach(t => batch.set(doc(db, 'users', user.uid, 'transactions', t.id), t));
+        INITIAL_INVESTMENTS.forEach(i => batch.set(doc(db, 'users', user.uid, 'investments', i.id), i));
+        INITIAL_DIVIDENDS.forEach(d => batch.set(doc(db, 'users', user.uid, 'dividends', d.id), d));
+        INITIAL_BUDGETS.forEach((b, idx) => batch.set(doc(db, 'users', user.uid, 'budgets', `b_${idx}`), b));
+        INITIAL_GOALS.forEach(g => batch.set(doc(db, 'users', user.uid, 'goals', g.id), g));
+        await batch.commit();
+      } catch (err) {
+        console.warn('Erro ao restaurar dados de exemplo no Firestore:', err);
+      }
     }
   };
 
@@ -1270,6 +1405,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           principal: inv.quantity * inv.averagePrice,
           multiplierPercent: inv.benchmarkRate,
           startDateStr: inv.acquisitionDate,
+          targetDateStr: cdiScheduleInfo.effectiveDate,
           cdiAnnualPercent: inv.baseCdiRate || CURRENT_CDI_ANNUAL_DEFAULT,
         });
         if (sim && sim.grossAmount > 0 && inv.quantity > 0) {
@@ -1279,7 +1415,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
       return sum + inv.quantity * unitPrice;
     }, 0);
-  }, [investments]);
+  }, [investments, cdiScheduleInfo.effectiveDate]);
 
   const totalInvestmentProfit = useMemo(() => {
     return totalInvestmentValue - totalInvestedCost;
@@ -1369,6 +1505,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           principal: inv.quantity * inv.averagePrice,
           multiplierPercent: inv.benchmarkRate,
           startDateStr: inv.acquisitionDate,
+          targetDateStr: cdiScheduleInfo.effectiveDate,
           cdiAnnualPercent: inv.baseCdiRate || CURRENT_CDI_ANNUAL_DEFAULT,
         });
         if (sim && sim.grossAmount > 0 && inv.quantity > 0) {
@@ -1397,7 +1534,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         percentage: totalVal > 0 ? (data.current / totalVal) * 100 : 0,
       };
     });
-  }, [investments]);
+  }, [investments, cdiScheduleInfo.effectiveDate]);
 
   const monthlyCashflowHistory = useMemo(() => {
     const [yearStr, monthStr] = selectedMonth.split('-');
@@ -1448,6 +1585,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         goals,
         selectedMonth,
         setSelectedMonth,
+
+        cdiScheduleInfo,
 
         isCloudSyncing,
         isCloudActive: !!user,

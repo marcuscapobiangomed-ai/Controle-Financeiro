@@ -75,9 +75,12 @@ export const Navbar: React.FC<NavbarProps> = ({
     if (selectedMonth) monthSet.add(selectedMonth);
 
     // Common recent reference months
+    monthSet.add('2026-10');
     monthSet.add('2026-09');
     monthSet.add('2026-08');
     monthSet.add('2026-07');
+    monthSet.add('2026-06');
+    monthSet.add('2026-05');
 
     transactions.forEach(t => {
       if (t.date && t.date.length >= 7) {

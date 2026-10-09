@@ -119,7 +119,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setType('expense');
       setDescription('');
       setAmountStr('');
-      setDate('2026-09-24');
+      setDate(new Date().toISOString().split('T')[0]);
       setCategory(EXPENSE_CATEGORIES[0]);
       setAccountId(accounts[0]?.id || '');
       setStatus('settled');

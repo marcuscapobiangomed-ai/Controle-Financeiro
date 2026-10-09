@@ -26,10 +26,19 @@ import {
   Percent,
   FileDown,
   CheckCircle2,
+  Sparkles,
+  Layers,
+  Activity,
+  ChevronRight,
+  Info,
 } from 'lucide-react';
 import { useFinance } from '../context/FinanceContext';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import { generateMonthlyPDFReport } from '../utils/pdfGenerator';
+import {
+  calculateCdiAccruedValue,
+  CURRENT_CDI_ANNUAL_DEFAULT,
+} from '../utils/cdiCalculations';
 
 type TimeframeOption = '6m' | '12m' | 'year' | 'all';
 
@@ -45,6 +54,20 @@ interface MonthlyReportPoint {
   totalNetWorth: number;
 }
 
+export interface SixMonthNetWorthPoint {
+  month: string;
+  label: string;
+  totalNetWorth: number;
+  investedValue: number;
+  cashBalance: number;
+  income: number;
+  expense: number;
+  savings: number;
+  dividends: number;
+  growthMoM: number;
+  growthMoMPct: number;
+}
+
 const CATEGORY_COLORS = [
   '#10b981', // emerald
   '#0ea5e9', // sky
@@ -58,10 +81,107 @@ const CATEGORY_COLORS = [
   '#64748b', // slate
 ];
 
+// Stable Top-Level Custom Dark Tooltip for Income vs Expenses
+const CustomFlowTooltip: React.FC<any> = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload as MonthlyReportPoint;
+    return (
+      <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-2xl text-xs space-y-1.5 font-sans min-w-[200px]">
+        <div className="font-bold text-white border-b border-slate-800 pb-1">
+          Competência: {data.label}
+        </div>
+        <div className="flex items-center justify-between text-emerald-400 font-mono">
+          <span>Entradas (Receitas):</span>
+          <span className="font-semibold tabular-nums">+{formatCurrency(data.income)}</span>
+        </div>
+        <div className="flex items-center justify-between text-rose-400 font-mono">
+          <span>Saídas (Despesas):</span>
+          <span className="font-semibold tabular-nums">-{formatCurrency(data.expense)}</span>
+        </div>
+        <div className="flex items-center justify-between text-slate-200 font-mono border-t border-slate-800 pt-1">
+          <span>Saldo Líquido:</span>
+          <span
+            className={`font-bold tabular-nums ${
+              data.balance >= 0 ? 'text-emerald-400' : 'text-rose-400'
+            }`}
+          >
+            {formatCurrency(data.balance)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-slate-400 text-[11px] pt-0.5">
+          <span>Taxa de Poupança:</span>
+          <span className="text-emerald-300 font-mono font-medium">
+            {data.savingsRate.toFixed(1)}%
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+// Stable Top-Level Custom Dark Tooltip for 6-Month Net Worth Evolution
+const CustomNetWorthEvolutionTooltip: React.FC<any> = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload as SixMonthNetWorthPoint;
+    const hasGrowth = data.growthMoM >= 0;
+    return (
+      <div className="bg-slate-900 border border-slate-700 p-3.5 rounded-xl shadow-2xl text-xs space-y-2 font-sans min-w-[240px]">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+          <span className="font-bold text-white text-sm">Competência: {data.label}</span>
+          <span className="text-[10px] text-slate-400 font-mono">{data.month}</span>
+        </div>
+
+        <div className="flex items-center justify-between text-emerald-400 font-mono text-sm">
+          <span className="font-semibold text-slate-200">Patrimônio Total:</span>
+          <span className="font-bold tabular-nums">{formatCurrency(data.totalNetWorth)}</span>
+        </div>
+
+        <div className="space-y-1 pt-1 border-t border-slate-800/80">
+          <div className="flex items-center justify-between text-sky-400 font-mono">
+            <span className="text-slate-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-sky-400 inline-block" />
+              Investimentos:
+            </span>
+            <span className="tabular-nums font-medium">{formatCurrency(data.investedValue)}</span>
+          </div>
+
+          <div className="flex items-center justify-between text-amber-400 font-mono">
+            <span className="text-slate-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+              Saldo em Contas:
+            </span>
+            <span className="tabular-nums font-medium">{formatCurrency(data.cashBalance)}</span>
+          </div>
+
+          <div className="flex items-center justify-between text-slate-300 font-mono">
+            <span className="text-slate-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+              Poupança do Mês:
+            </span>
+            <span className={`tabular-nums font-medium ${data.savings >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {data.savings >= 0 ? '+' : ''}{formatCurrency(data.savings)}
+            </span>
+          </div>
+        </div>
+
+        <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono">
+          <span className="text-slate-400">Variação vs Anterior:</span>
+          <span className={`font-semibold ${hasGrowth ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {hasGrowth ? '+' : ''}{formatCurrency(data.growthMoM)} ({hasGrowth ? '+' : ''}{data.growthMoMPct.toFixed(1)}%)
+          </span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
 export const ReportsView: React.FC = () => {
   const {
     transactions,
     investments,
+    dividends,
     totalCashInAccounts,
     totalInvestmentValue,
     totalNetWorth,
@@ -78,6 +198,7 @@ export const ReportsView: React.FC = () => {
   } = useFinance();
 
   const [timeframe, setTimeframe] = useState<TimeframeOption>('6m');
+  const [netWorthViewMode, setNetWorthViewMode] = useState<'total' | 'breakdown' | 'contributions'>('total');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
   const [pdfSuccess, setPdfSuccess] = useState<boolean>(false);
 
@@ -239,71 +360,150 @@ export const ReportsView: React.FC = () => {
       .sort((a, b) => b.value - a.value);
   }, [monthlyData, transactions]);
 
-  // Custom Dark Tooltip for Income vs Expenses
-  const CustomFlowTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload as MonthlyReportPoint;
-      return (
-        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-2xl text-xs space-y-1.5 font-sans min-w-[200px]">
-          <div className="font-bold text-white border-b border-slate-800 pb-1">
-            Competência: {data.label}
-          </div>
-          <div className="flex items-center justify-between text-emerald-400 font-mono">
-            <span>Entradas (Receitas):</span>
-            <span className="font-semibold tabular-nums">+{formatCurrency(data.income)}</span>
-          </div>
-          <div className="flex items-center justify-between text-rose-400 font-mono">
-            <span>Saídas (Despesas):</span>
-            <span className="font-semibold tabular-nums">-{formatCurrency(data.expense)}</span>
-          </div>
-          <div className="flex items-center justify-between text-slate-200 font-mono border-t border-slate-800 pt-1">
-            <span>Saldo Líquido:</span>
-            <span
-              className={`font-bold tabular-nums ${
-                data.balance >= 0 ? 'text-emerald-400' : 'text-rose-400'
-              }`}
-            >
-              {formatCurrency(data.balance)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-slate-400 text-[11px] pt-0.5">
-            <span>Taxa de Poupança:</span>
-            <span className="text-emerald-300 font-mono font-medium">
-              {data.savingsRate.toFixed(1)}%
-            </span>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
+  // Dedicated calculation for the last 6 months of accumulated Net Worth
+  const sixMonthsNetWorthData = useMemo<SixMonthNetWorthPoint[]>(() => {
+    const [currYearStr, currMonthStr] = selectedMonth.split('-');
+    const currentY = parseInt(currYearStr, 10) || new Date().getFullYear();
+    const currentM = parseInt(currMonthStr, 10) || (new Date().getMonth() + 1);
 
-  // Custom Dark Tooltip for Portfolio Growth
-  const CustomPortfolioTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload as MonthlyReportPoint;
-      return (
-        <div className="bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-2xl text-xs space-y-1.5 font-sans min-w-[220px]">
-          <div className="font-bold text-white border-b border-slate-800 pb-1">
-            Posição Patrimonial: {data.label}
-          </div>
-          <div className="flex items-center justify-between text-emerald-400 font-mono">
-            <span>Patrimônio Total:</span>
-            <span className="font-bold tabular-nums">{formatCurrency(data.totalNetWorth)}</span>
-          </div>
-          <div className="flex items-center justify-between text-sky-400 font-mono">
-            <span>Carteira de Investimentos:</span>
-            <span className="tabular-nums">{formatCurrency(data.investedValue)}</span>
-          </div>
-          <div className="flex items-center justify-between text-slate-300 font-mono">
-            <span>Disponível em Contas:</span>
-            <span className="tabular-nums">{formatCurrency(data.cashBalance)}</span>
-          </div>
-        </div>
-      );
+    const monthKeys: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      let targetM = currentM - i;
+      let targetY = currentY;
+      while (targetM <= 0) {
+        targetM += 12;
+        targetY -= 1;
+      }
+      monthKeys.push(`${targetY}-${String(targetM).padStart(2, '0')}`);
     }
-    return null;
-  };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // 1. Gather monthly cashflows and investments
+    const pointsRaw = monthKeys.map(mKey => {
+      const [y, m] = mKey.split('-');
+      const label = `${monthShortNames[parseInt(m, 10) - 1]}/${y.slice(2)}`;
+
+      const lastDay = new Date(parseInt(y, 10), parseInt(m, 10), 0).getDate();
+      const lastDateOfMonth = `${mKey}-${String(lastDay).padStart(2, '0')}`;
+      const effectiveTargetDate = lastDateOfMonth > todayStr ? todayStr : lastDateOfMonth;
+
+      const mTx = transactions.filter(t => t.date.startsWith(mKey));
+      const income = mTx
+        .filter(t => t.type === 'income' && t.status === 'settled')
+        .reduce((sum, t) => sum + t.amount, 0);
+      const expense = mTx
+        .filter(t => t.type === 'expense' && t.status === 'settled')
+        .reduce((sum, t) => sum + t.amount, 0);
+      const savings = income - expense;
+
+      const mDiv = dividends
+        .filter(d => d.date.startsWith(mKey))
+        .reduce((sum, d) => sum + d.amount, 0);
+
+      // Value of investments active in that month
+      const investedVal = investments.reduce((sum, inv) => {
+        const acq = inv.acquisitionDate || '2020-01-01';
+        if (acq <= lastDateOfMonth) {
+          if (inv.benchmarkType === 'cdi' && inv.benchmarkRate && inv.averagePrice > 0) {
+            const sim = calculateCdiAccruedValue({
+              principal: inv.quantity * inv.averagePrice,
+              multiplierPercent: inv.benchmarkRate,
+              startDateStr: acq,
+              targetDateStr: effectiveTargetDate,
+              cdiAnnualPercent: inv.baseCdiRate || CURRENT_CDI_ANNUAL_DEFAULT,
+            });
+            const accruedPrice =
+              sim && sim.grossAmount > 0 ? sim.grossAmount / inv.quantity : inv.currentPrice;
+            return sum + inv.quantity * Math.max(inv.currentPrice, accruedPrice);
+          }
+          return sum + inv.quantity * inv.currentPrice;
+        }
+        return sum;
+      }, 0);
+
+      return {
+        month: mKey,
+        label,
+        income,
+        expense,
+        savings,
+        dividends: mDiv,
+        investedValue: Math.round(investedVal),
+      };
+    });
+
+    // 2. Propagate cash backwards from current totalCashInAccounts
+    const cashArray = new Array(pointsRaw.length).fill(0);
+    const lastIdx = pointsRaw.length - 1;
+    cashArray[lastIdx] = Math.max(0, totalCashInAccounts);
+
+    for (let i = lastIdx; i > 0; i--) {
+      const change = pointsRaw[i].savings + pointsRaw[i].dividends;
+      cashArray[i - 1] = Math.max(0, cashArray[i] - change);
+    }
+
+    // 3. Assemble complete points
+    const points: SixMonthNetWorthPoint[] = [];
+    pointsRaw.forEach((raw, idx) => {
+      const cashBalance = cashArray[idx];
+      const totalNetWorth = cashBalance + raw.investedValue;
+      const prevTotal = idx > 0 ? points[idx - 1].totalNetWorth : totalNetWorth;
+      const growthMoM = totalNetWorth - prevTotal;
+      const growthMoMPct = prevTotal > 0 ? (growthMoM / prevTotal) * 100 : 0;
+
+      points.push({
+        month: raw.month,
+        label: raw.label,
+        totalNetWorth,
+        investedValue: raw.investedValue,
+        cashBalance,
+        income: raw.income,
+        expense: raw.expense,
+        savings: raw.savings,
+        dividends: raw.dividends,
+        growthMoM,
+        growthMoMPct,
+      });
+    });
+
+    return points;
+  }, [selectedMonth, transactions, dividends, investments, totalCashInAccounts]);
+
+  const sixMonthsMetrics = useMemo(() => {
+    if (sixMonthsNetWorthData.length === 0) {
+      return {
+        startVal: 0,
+        endVal: 0,
+        totalChange: 0,
+        totalChangePct: 0,
+        avgMonthlySavings: 0,
+        bestMonth: null as SixMonthNetWorthPoint | null,
+      };
+    }
+    const startVal = sixMonthsNetWorthData[0].totalNetWorth;
+    const endVal = sixMonthsNetWorthData[sixMonthsNetWorthData.length - 1].totalNetWorth;
+    const totalChange = endVal - startVal;
+    const totalChangePct = startVal > 0 ? (totalChange / startVal) * 100 : 0;
+    const totalSavings6m = sixMonthsNetWorthData.reduce((acc, p) => acc + p.savings, 0);
+    const avgMonthlySavings = totalSavings6m / sixMonthsNetWorthData.length;
+
+    let bestMonth = sixMonthsNetWorthData[0];
+    for (const pt of sixMonthsNetWorthData) {
+      if (pt.growthMoM > bestMonth.growthMoM) {
+        bestMonth = pt;
+      }
+    }
+
+    return {
+      startVal,
+      endVal,
+      totalChange,
+      totalChangePct,
+      avgMonthlySavings,
+      bestMonth,
+    };
+  }, [sixMonthsNetWorthData]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
@@ -469,7 +669,7 @@ export const ReportsView: React.FC = () => {
         </div>
 
         <div className="h-72 w-full pt-2">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minHeight={260}>
             <ComposedChart data={monthlyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
               <XAxis
@@ -485,8 +685,8 @@ export const ReportsView: React.FC = () => {
                 tickFormatter={(val: number) => `R$ ${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`}
               />
               <Tooltip content={<CustomFlowTooltip />} cursor={{ fill: 'rgba(30, 41, 59, 0.4)' }} />
-              <Bar dataKey="income" name="Entradas" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={32} />
-              <Bar dataKey="expense" name="Saídas" fill="#f43f5e" radius={[3, 3, 0, 0]} maxBarSize={32} />
+              <Bar dataKey="income" name="Entradas" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+              <Bar dataKey="expense" name="Saídas" fill="#f43f5e" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false} />
               <Line
                 type="monotone"
                 dataKey="balance"
@@ -495,83 +695,282 @@ export const ReportsView: React.FC = () => {
                 strokeWidth={2.5}
                 dot={{ fill: '#38bdf8', r: 3 }}
                 activeDot={{ r: 5, fill: '#0284c7' }}
+                isAnimationActive={false}
               />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* CHART 2: PORTFOLIO & NET WORTH GROWTH OVER TIME (RECHARTS AREA CHART) */}
-      <div className="p-5 rounded-xl bg-slate-900/90 border border-slate-800 shadow-sm space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      {/* CHART 2: EVOLUÇÃO DO PATRIMÔNIO LÍQUIDO ACUMULADO (ÚLTIMOS 6 MESES - RECHARTS) */}
+      <div className="p-5 rounded-xl bg-slate-900/90 border border-slate-800 shadow-sm space-y-4">
+        {/* Header & Mode Switcher */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-white">
-              Evolução do Patrimônio & Crescimento da Carteira
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm sm:text-base font-bold text-white tracking-tight flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-400" />
+                Evolução do Patrimônio Líquido Acumulado (Últimos 6 Meses)
+              </h2>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                6 Meses
+              </span>
+            </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Crescimento acumulado do patrimônio líquido consolidado ao longo do tempo
+              Trajetória consolidada de crescimento patrimonial (saldo em contas + carteira de investimentos)
             </p>
           </div>
-          <div className="flex items-center gap-4 text-xs">
-            <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-              Patrimônio Total
+
+          {/* Mode Switcher Buttons */}
+          <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-lg self-start lg:self-center">
+            <button
+              onClick={() => setNetWorthViewMode('total')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
+                netWorthViewMode === 'total'
+                  ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Exibir curva contínua do patrimônio líquido total"
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Patrimônio Total</span>
+            </button>
+            <button
+              onClick={() => setNetWorthViewMode('breakdown')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
+                netWorthViewMode === 'breakdown'
+                  ? 'bg-slate-800 text-sky-400 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Exibir divisão entre investimentos e contas"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Composição</span>
+            </button>
+            <button
+              onClick={() => setNetWorthViewMode('contributions')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 cursor-pointer ${
+                netWorthViewMode === 'contributions'
+                  ? 'bg-slate-800 text-amber-400 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Exibir fluxo mensal de poupança com a curva patrimonial"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Poupança & Curva</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 6-Month Fast KPI Summary Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs font-mono">
+          <div>
+            <span className="text-[10px] text-slate-400 block font-sans">Patrimônio Inicial (Há 6m)</span>
+            <span className="text-slate-200 font-bold tabular-nums">
+              {formatCurrency(sixMonthsMetrics.startVal)}
             </span>
-            <span className="flex items-center gap-1.5 text-sky-400 font-medium">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block" />
-              Carteira de Investimentos
+          </div>
+
+          <div>
+            <span className="text-[10px] text-slate-400 block font-sans">Patrimônio Atual</span>
+            <span className="text-white font-bold tabular-nums">
+              {formatCurrency(sixMonthsMetrics.endVal)}
+            </span>
+          </div>
+
+          <div>
+            <span className="text-[10px] text-slate-400 block font-sans">Crescimento no Semestre</span>
+            <span
+              className={`font-bold tabular-nums flex items-baseline gap-1 ${
+                sixMonthsMetrics.totalChange >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}
+            >
+              {sixMonthsMetrics.totalChange >= 0 ? '+' : ''}{formatCurrency(sixMonthsMetrics.totalChange)}
+              <span className="text-[10px] font-normal opacity-85">
+                ({sixMonthsMetrics.totalChange >= 0 ? '+' : ''}{sixMonthsMetrics.totalChangePct.toFixed(1)}%)
+              </span>
+            </span>
+          </div>
+
+          <div>
+            <span className="text-[10px] text-slate-400 block font-sans">Aporte Médio Estimado</span>
+            <span className="text-sky-300 font-bold tabular-nums">
+              {sixMonthsMetrics.avgMonthlySavings >= 0 ? '+' : ''}{formatCurrency(sixMonthsMetrics.avgMonthlySavings)}/mês
             </span>
           </div>
         </div>
 
-        <div className="h-72 w-full pt-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={monthlyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorNetWorth" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                </linearGradient>
-                <linearGradient id="colorInvested" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="label"
-                stroke="#64748b"
-                tick={{ fill: '#94a3b8', fontSize: 11 }}
-                tickLine={false}
-              />
-              <YAxis
-                stroke="#64748b"
-                tick={{ fill: '#94a3b8', fontSize: 11 }}
-                tickLine={false}
-                domain={['dataMin - 10000', 'dataMax + 10000']}
-                tickFormatter={(val: number) => `R$ ${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`}
-              />
-              <Tooltip content={<CustomPortfolioTooltip />} />
-              <Area
-                type="monotone"
-                dataKey="totalNetWorth"
-                name="Patrimônio Total"
-                stroke="#10b981"
-                strokeWidth={2.5}
-                fillOpacity={1}
-                fill="url(#colorNetWorth)"
-              />
-              <Area
-                type="monotone"
-                dataKey="investedValue"
-                name="Investimentos"
-                stroke="#0ea5e9"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#colorInvested)"
-              />
-            </AreaChart>
+        {/* Recharts Chart Area */}
+        <div className="h-80 w-full pt-2">
+          <ResponsiveContainer key={netWorthViewMode} width="100%" height="100%" minHeight={280}>
+            {netWorthViewMode === 'contributions' ? (
+              <ComposedChart
+                data={sixMonthsNetWorthData}
+                margin={{ top: 15, right: 15, left: 5, bottom: 5 }}
+              >
+                <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickLine={false}
+                />
+                <YAxis
+                  yAxisId="left"
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickLine={false}
+                  tickFormatter={(val: number) =>
+                    `R$ ${Math.abs(val) >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`
+                  }
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickLine={false}
+                  domain={['auto', 'auto']}
+                  tickFormatter={(val: number) =>
+                    `R$ ${Math.abs(val) >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`
+                  }
+                />
+                <Tooltip content={<CustomNetWorthEvolutionTooltip />} />
+                <Bar
+                  yAxisId="left"
+                  dataKey="savings"
+                  name="Poupança Líquida"
+                  fill="#10b981"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={36}
+                  isAnimationActive={false}
+                />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="totalNetWorth"
+                  name="Patrimônio Total"
+                  stroke="#38bdf8"
+                  strokeWidth={3}
+                  dot={{ fill: '#38bdf8', r: 4 }}
+                  activeDot={{ r: 6, fill: '#0284c7' }}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            ) : (
+              <AreaChart
+                data={sixMonthsNetWorthData}
+                margin={{ top: 15, right: 15, left: 5, bottom: 5 }}
+              >
+                <defs>
+                  <linearGradient id="colorNetWorth6m" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.45} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="colorInvested6m" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="colorCash6m" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickLine={false}
+                />
+                <YAxis
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickLine={false}
+                  domain={['auto', 'auto']}
+                  tickFormatter={(val: number) =>
+                    `R$ ${Math.abs(val) >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`
+                  }
+                />
+                <Tooltip content={<CustomNetWorthEvolutionTooltip />} />
+
+                {netWorthViewMode === 'breakdown' ? (
+                  <>
+                    <Area
+                      type="monotone"
+                      dataKey="investedValue"
+                      name="Investimentos"
+                      stroke="#0ea5e9"
+                      strokeWidth={2.5}
+                      fillOpacity={1}
+                      fill="url(#colorInvested6m)"
+                      isAnimationActive={false}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="cashBalance"
+                      name="Saldo em Contas"
+                      stroke="#f59e0b"
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#colorCash6m)"
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="totalNetWorth"
+                      name="Patrimônio Total"
+                      stroke="#10b981"
+                      strokeWidth={3}
+                      dot={{ fill: '#10b981', r: 3 }}
+                      activeDot={{ r: 6, fill: '#059669' }}
+                      isAnimationActive={false}
+                    />
+                  </>
+                ) : (
+                  <Area
+                    type="monotone"
+                    dataKey="totalNetWorth"
+                    name="Patrimônio Líquido Acumulado"
+                    stroke="#10b981"
+                    strokeWidth={3}
+                    dot={{ fill: '#10b981', r: 4 }}
+                    activeDot={{ r: 6, fill: '#059669' }}
+                    fillOpacity={1}
+                    fill="url(#colorNetWorth6m)"
+                    isAnimationActive={false}
+                  />
+                )}
+              </AreaChart>
+            )}
           </ResponsiveContainer>
+        </div>
+
+        {/* Legend & Contextual Notes */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80 text-xs text-slate-400">
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block shadow-sm shadow-emerald-500/50" />
+              Patrimônio Total ({formatCurrency(sixMonthsMetrics.endVal)})
+            </span>
+            <span className="flex items-center gap-1.5 text-sky-400 font-medium">
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block" />
+              Investimentos ({formatCurrency(totalInvestmentValue)})
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-400 font-medium">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
+              Disponível em Contas ({formatCurrency(totalCashInAccounts)})
+            </span>
+          </div>
+
+          {sixMonthsMetrics.bestMonth && (
+            <div className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Maior salto no semestre:</span>
+              <strong className="text-emerald-300">{sixMonthsMetrics.bestMonth.label}</strong>
+              <span>(+{formatCurrency(sixMonthsMetrics.bestMonth.growthMoM)})</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -599,7 +998,7 @@ export const ReportsView: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center pt-2">
                 {/* Donut Chart */}
                 <div className="h-52 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minHeight={200}>
                     <PieChart>
                       <Pie
                         data={categoryData}
@@ -609,6 +1008,7 @@ export const ReportsView: React.FC = () => {
                         outerRadius={80}
                         paddingAngle={3}
                         dataKey="value"
+                        isAnimationActive={false}
                       >
                         {categoryData.map((entry, index) => (
                           <Cell
@@ -715,6 +1115,7 @@ export const ReportsView: React.FC = () => {
                     fillOpacity={1}
                     fill="url(#colorSavingsRate)"
                     dot={{ fill: '#10b981', r: 3 }}
+                    isAnimationActive={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>

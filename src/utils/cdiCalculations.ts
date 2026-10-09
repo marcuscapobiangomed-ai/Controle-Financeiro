@@ -6,6 +6,103 @@
 export const CURRENT_CDI_ANNUAL_DEFAULT = 10.65; // % a.a.
 
 /**
+ * Converte string 'YYYY-MM-DD' em Date local seguro (ao meio-dia),
+ * evitando bugs de fuso horário UTC (ex: UTC-3 Brasil) onde a data retrocede 1 dia.
+ */
+export function parseLocalDate(dateStr: string): Date {
+  if (!dateStr) return new Date();
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    return new Date(y, m, d, 12, 0, 0, 0);
+  }
+  return new Date(dateStr);
+}
+
+/**
+ * Retorna a data efetiva de apuração do CDI considerando a regra de mercado brasileiro (B3/CETIP):
+ * - O rendimento diário de ativos pós-fixados (CDB 100%, 120%, 140% CDI) é apurado e creditado
+ *   em dias úteis às 11:00 (11h).
+ * - Se hoje for dia útil:
+ *   - A partir das 11:00: o rendimento de hoje já está apurado e incorporado ao saldo.
+ *   - Antes das 11:00: o rendimento oficial acumulado reflete até o dia útil anterior às 11h.
+ * - Em fins de semana (sábado/domingo): o rendimento reflete a sexta-feira anterior às 11h.
+ */
+export function getEffectiveCdiAccrualDate(now: Date = new Date()): string {
+  const d = new Date(now);
+  const dayOfWeek = d.getDay(); // 0 = Domingo, 6 = Sábado
+  const hours = d.getHours();
+
+  if (dayOfWeek === 6) {
+    // Sábado -> recua para sexta-feira
+    d.setDate(d.getDate() - 1);
+  } else if (dayOfWeek === 0) {
+    // Domingo -> recua para sexta-feira
+    d.setDate(d.getDate() - 2);
+  } else if (dayOfWeek === 1 && hours < 11) {
+    // Segunda-feira antes das 11h -> recua para sexta-feira anterior
+    d.setDate(d.getDate() - 3);
+  } else if (hours < 11) {
+    // Terça a Sexta antes das 11h -> apuração oficial fechada até ontem
+    d.setDate(d.getDate() - 1);
+  }
+  // Se for dia útil (seg-sex) após 11:00 -> 'd' é a data de hoje!
+
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Informações detalhadas do status do cronograma de atualização das 11h do CDI
+ */
+export function getCdiAccrualScheduleInfo(now: Date = new Date()): {
+  lastAccrualText: string;
+  nextAccrualText: string;
+  isUpdatedToday: boolean;
+  effectiveDate: string;
+  dailyRatePercent: number;
+} {
+  const dayOfWeek = now.getDay();
+  const hours = now.getHours();
+  const effectiveDate = getEffectiveCdiAccrualDate(now);
+
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const isUpdatedToday = !isWeekend && hours >= 11;
+
+  let lastAccrualText = '';
+  let nextAccrualText = '';
+
+  if (isUpdatedToday) {
+    lastAccrualText = 'Hoje às 11:00 (B3/CETIP)';
+    nextAccrualText = dayOfWeek === 5 ? 'Segunda-feira às 11:00' : 'Amanhã às 11:00';
+  } else if (isWeekend) {
+    lastAccrualText = 'Sexta-feira às 11:00';
+    nextAccrualText = 'Segunda-feira às 11:00';
+  } else if (dayOfWeek === 1 && hours < 11) {
+    lastAccrualText = 'Sexta-feira às 11:00';
+    nextAccrualText = 'Hoje às 11:00';
+  } else {
+    lastAccrualText = 'Ontem às 11:00';
+    nextAccrualText = 'Hoje às 11:00';
+  }
+
+  // Taxa diária de referência para 100% do CDI
+  const dailyRatePercent = (Math.pow(1 + CURRENT_CDI_ANNUAL_DEFAULT / 100, 1 / 252) - 1) * 100;
+
+  return {
+    lastAccrualText,
+    nextAccrualText,
+    isUpdatedToday,
+    effectiveDate,
+    dailyRatePercent,
+  };
+}
+
+/**
  * Converte taxa anual CDI em taxa diária considerando 252 dias úteis
  * CDI_diario = (1 + (CDI_anual * percentualCDI / 100))^(1/252) - 1
  */
@@ -18,11 +115,11 @@ export function calculateDailyCdiRate(
 }
 
 /**
- * Calcula quantidade aproximada de dias úteis entre duas datas (desconsiderando feriados nacionais para estimativa rápida)
+ * Calcula quantidade exata de dias úteis entre duas datas (convenção bancária 252 dias úteis)
  */
 export function estimateBusinessDays(startDateStr: string, endDateStr: string): number {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
+  const start = parseLocalDate(startDateStr);
+  const end = parseLocalDate(endDateStr);
 
   if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
     return 0;
@@ -34,7 +131,7 @@ export function estimateBusinessDays(startDateStr: string, endDateStr: string): 
 
   while (cur <= end) {
     const dayOfWeek = cur.getDay();
-    // 0 = Sunday, 6 = Saturday
+    // 0 = Domingo, 6 = Sábado
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
       count++;
     }
@@ -48,8 +145,8 @@ export function estimateBusinessDays(startDateStr: string, endDateStr: string): 
  * Calcula quantidade total de dias corridos entre duas datas
  */
 export function calculateCalendarDays(startDateStr: string, endDateStr: string): number {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
+  const start = parseLocalDate(startDateStr);
+  const end = parseLocalDate(endDateStr);
   if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return 0;
   const diffTime = Math.abs(end.getTime() - start.getTime());
   return Math.floor(diffTime / (1000 * 60 * 60 * 24));
@@ -95,7 +192,7 @@ export function calculateCdiAccruedValue(params: {
     principal,
     multiplierPercent,
     startDateStr,
-    targetDateStr = new Date().toISOString().split('T')[0],
+    targetDateStr = getEffectiveCdiAccrualDate(),
     cdiAnnualPercent = CURRENT_CDI_ANNUAL_DEFAULT,
   } = params;
 
