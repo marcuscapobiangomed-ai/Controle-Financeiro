@@ -1,0 +1,6 @@
+{
+  "name": "CapitalControl - Centro Financeiro",
+  "description": "Centro de controle financeiro pessoal: gestão completa de entradas, saídas, fluxo de caixa e carteira de investimentos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
